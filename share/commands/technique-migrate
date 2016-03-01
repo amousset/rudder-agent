@@ -1,0 +1,62 @@
+#!/bin/sh
+
+. "${BASEDIR}/../lib/api_call.sh"
+
+TECHNIQUES_DIRECTORY="${CONFIGURATION_DIRECTORY}/technique"
+TOKEN=""
+DISPLAY_COMMAND=false
+
+while getopts "iIvdqct:" opt; do
+  case $opt in
+    i|I|v|d)
+      DISPLAY_COMMAND=true
+      ;;
+    t)
+      TOKEN="${OPTARG}"
+      ;;
+    c)
+      clear_colors
+      ;;
+  esac
+  # to keep the argument as $1
+  shift `expr ${OPTIND} - 1`
+done
+
+TECHNIQUE_NAME="$1"
+if [ -z "${TECHNIQUE_NAME}" ]
+then
+  echo "Usage: rudder technique migrate -t token technique_name [target_technique_version]"
+  exit 1
+fi
+
+TECHNIQUE_VERSION="$2"
+if [ -z "${TECHNIQUE_VERSION}" ]
+then
+  TECHNIQUE_VERSION="latest"
+fi
+
+if [ "${TECHNIQUE_VERSION}" == "latest" ]
+then
+  TECHNIQUE_VERSION=$(ls -1 $(find $(grep "^rudder.dir.techniques" /opt/rudder/etc/rudder-web.properties | cut -d= -f2) -name ${TECHNIQUE_NAME}) | sort -n | tail -n1)
+fi
+
+DIRECTIVES=$(complete_api_call "https://localhost/rudder/api/latest/directives" "${TOKEN}" "GET" "| jq -r '.data.directives[] | select(.techniqueName==\"${TECHNIQUE_NAME}\") | .id'" "${DISPLAY_COMMAND} | sed 's/\"//g'")
+
+echo "Directives using the '${TECHNIQUE_NAME}' technique:"
+echo "${DIRECTIVES}"
+
+while IFS= read
+do
+    echo "Treating $REPLY"
+    result=$(complete_api_call "https://localhost/rudder/api/latest/directives/$REPLY" "${TOKEN}" "POST" "-d \"techniqueVersion=${TECHNIQUE_VERSION}\"" "${DISPLAY_COMMAND}")
+    code=$?
+    if [ ${code} -eq 0 ]
+    then
+      printf "${GREEN}ok${NORMAL}: Changed technique version for directive: '$REPLY'.\n"
+    else
+      printf "${RED}error${NORMAL}: Could not change technique version for directive: '$REPLY'.\n"
+      echo "${result}"
+      exit 1
+    fi
+done <<< "${DIRECTIVES}"
+
